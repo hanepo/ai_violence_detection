@@ -1,0 +1,13 @@
+numpy>=1.24.0
+opencv-python>=4.9.0
+librosa>=0.10.1
+sounddevice>=0.4.6
+paho-mqtt>=2.1.0
+pandas>=2.2.0
+scikit-learn>=1.4.0
+Flask>=3.0.0
+tflite-runtime>=2.14.0; python_version < "3.13"
+ai-edge-litert>=2.1.0; python_version >= "3.13"
+picamera2>=0.3.34; python_version >= "3.13"
+imageio-ffmpeg>=0.5.1
+RPi.GPIO>=0.7.1

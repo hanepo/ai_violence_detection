@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Upload Test | AI Security</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='dashboard.css') }}"
+    />
+  </head>
+  <body>
+    <aside class="sidebar">
+      <div class="brand">AI Corridor Guard</div>
+      <a class="nav-link" href="{{ url_for('dashboard') }}">Live Monitoring</a>
+      <a class="nav-link active" href="{{ url_for('upload_test_page') }}"
+        >Upload Test</a
+      >
+    </aside>
+
+    <main class="main-grid upload-grid">
+      <section class="hero-card">
+        <div class="hero-head">
+          <h1>Upload Video/Audio Test</h1>
+          <span class="pill">Dataset Validation Mode</span>
+        </div>
+        <p class="muted">
+          Upload Kaggle clips to test detection before real corridor deployment.
+        </p>
+
+        {% with messages = get_flashed_messages() %} {% if messages %}
+        <div class="alert">{{ messages[0] }}</div>
+        {% endif %} {% endwith %}
+
+        <form method="post" enctype="multipart/form-data" class="upload-form">
+          <label>Video File (mp4/avi/mov)</label>
+          <input type="file" name="video_file" accept="video/*" />
+
+          <label>Audio File (wav/mp3/flac)</label>
+          <input type="file" name="audio_file" accept="audio/*" />
+
+          <button class="btn" type="submit">Analyze Upload</button>
+        </form>
+      </section>
+
+      <section class="stats-card">
+        <h2>Latest Result</h2>
+        {% if result %}
+        <div class="metric">
+          <span>Fusion Score</span
+          ><strong>{{ '%.3f'|format(result.fusion_score) }}</strong>
+        </div>
+        <div class="metric">
+          <span>Final Decision</span
+          ><strong>{{ 'ALERT' if result.is_alert else 'Normal' }}</strong>
+        </div>
+        <div class="metric">
+          <span>Vision Avg</span><strong>{{ '%.3f'|format(result.cv) }}</strong>
+        </div>
+        <div class="metric">
+          <span>Audio Avg</span><strong>{{ '%.3f'|format(result.ca) }}</strong>
+        </div>
+        <div class="metric">
+          <span>Event ID</span
+          ><strong class="mono">{{ result.event_id }}</strong>
+        </div>
+        {% else %}
+        <p class="muted">No upload processed yet.</p>
+        {% endif %}
+      </section>
+
+      <section class="events-card">
+        <h2>Model Breakdown</h2>
+        {% if result %} {% if result.preview_video_url %}
+        <div class="preview-wrap">
+          <video controls preload="metadata" class="result-video">
+            <source src="{{ result.preview_video_url }}" type="video/mp4" />
+            Your browser does not support the video tag.
+          </video>
+          <p class="muted">
+            Processed preview with timeline controls (rewind/seek).
+          </p>
+        </div>
+        {% elif result.preview_stream_url %}
+        <div class="stream-wrap">
+          <img
+            src="{{ result.preview_stream_url }}"
+            alt="upload stream preview"
+            class="stream-preview"
+          />
+          <p class="muted">
+            Live stream-style preview fallback (no seek controls).
+          </p>
+        </div>
+        {% else %}
+        <p class="muted">
+          Playable preview is not ready for this upload yet. Please re-upload
+          the video.
+        </p>
+        {% endif %} {% if result.preview_note %}
+        <p class="muted">{{ result.preview_note }}</p>
+        {% endif %}
+        <pre class="json-box">{{ result | tojson(indent=2) }}</pre>
+        {% else %}
+        <p class="empty">
+          Upload files to see per-modality scores and risk segments.
+        </p>
+        {% endif %}
+      </section>
+    </main>
+  </body>
+</html>

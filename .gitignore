@@ -1,0 +1,27 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Local / secrets
+.env
+.kaggle/
+*.pem
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Runtime artifacts (regenerated locally)
+logs/
+output/
+
+# Large media datasets — use scripts/download_datasets.py or your own data
+dataset/

@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Security Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='dashboard.css') }}"
+    />
+  </head>
+  <body>
+    <aside class="sidebar">
+      <div class="brand">AI Corridor Guard</div>
+      <a class="nav-link active" href="{{ url_for('dashboard') }}"
+        >Live Monitoring</a
+      >
+      <a class="nav-link" href="{{ url_for('upload_test_page') }}"
+        >Upload Test</a
+      >
+    </aside>
+
+    <main class="main-grid">
+      <section class="hero-card">
+        <div class="hero-head">
+          <h1>Live Camera Monitor</h1>
+          <span class="pill">Edge AI Active</span>
+        </div>
+        <div class="video-wrap">
+          <img src="{{ url_for('camera_feed') }}" alt="camera feed" />
+        </div>
+        <p class="muted">
+          Realtime preview from current camera input with violence risk overlay.
+        </p>
+      </section>
+
+      <section class="stats-card">
+        <h2>System Health</h2>
+        <div class="metric">
+          <span>Total Events</span><strong id="stat-total">{{ stats.total_events }}</strong>
+        </div>
+        <div class="metric">
+          <span>High Risk</span><strong id="stat-highrisk">{{ stats.high_risk_events }}</strong>
+        </div>
+        <div class="metric">
+          <span>Avg Threat</span
+          ><strong id="stat-avg">{{ '%.3f'|format(stats.avg_threat_score) }}</strong>
+        </div>
+        <div class="metric">
+          <span>Mic Status</span
+          ><strong id="mic-status-text" class="status-checking"
+            >Checking...</strong
+          >
+        </div>
+        <div class="mic-meter" aria-label="microphone level">
+          <div id="mic-level-fill" class="mic-level-fill"></div>
+        </div>
+        <p id="mic-status-note" class="muted mic-note">
+          Waiting for microphone probe...
+        </p>
+        <a class="btn" href="{{ url_for('upload_test_page') }}"
+          >Run Upload Test</a
+        >
+      </section>
+
+      <section class="events-card">
+        <div class="events-head">
+          <h2>Recent Alerts</h2>
+          <button
+            id="enable-browser-alerts"
+            class="btn-secondary"
+            type="button"
+          >
+            Enable Browser Alerts
+          </button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Camera</th>
+                <th>Alert Time</th>
+                <th>Clip (s)</th>
+                <th>Threat</th>
+                <th>Vision</th>
+                <th>Audio</th>
+                <th>Replay</th>
+                <th>Event ID</th>
+              </tr>
+            </thead>
+            <tbody id="events-table-body">
+              {% for e in events %}
+              <tr>
+                <td>{{ e.timestamp_utc }}</td>
+                <td>{{ e.camera_name }}</td>
+                <td>{{ e.alert_timestamp_utc or '-' }}</td>
+                <td>
+                  {% if e.clip_duration_seconds is not none %} {{
+                  '%.2f'|format(e.clip_duration_seconds) }} {% else %} - {%
+                  endif %}
+                </td>
+                <td>{{ '%.3f'|format(e.threat_score) }}</td>
+                <td>{{ '%.3f'|format(e.cv) }}</td>
+                <td>{{ '%.3f'|format(e.ca) }}</td>
+                <td>
+                  {% if e.replay_url %}
+                  <a
+                    class="replay-link"
+                    href="{{ e.replay_url }}"
+                    target="_blank"
+                    rel="noopener"
+                    >Replay</a
+                  >
+                  {% else %} - {% endif %}
+                </td>
+                <td class="mono">{{ e.event_id }}</td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="9" class="empty">No alerts yet.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <div id="alert-toast" class="alert-toast" aria-live="polite"></div>
+
+    <script>
+      const ALERT_THRESHOLD = Number({{ alert_threshold|tojson }});
+      const EVENTS_API_URL = {{ url_for('api_events')|tojson }};
+      const STATS_API_URL = {{ url_for('api_stats')|tojson }};
+      const MIC_STATUS_API_URL = {{ url_for('api_mic_status')|tojson }};
+      const eventsBody = document.getElementById("events-table-body");
+      const toast = document.getElementById("alert-toast");
+      const enableAlertsBtn = document.getElementById("enable-browser-alerts");
+      const micStatusText = document.getElementById("mic-status-text");
+      const micStatusNote = document.getElementById("mic-status-note");
+      const micLevelFill = document.getElementById("mic-level-fill");
+      const statTotal = document.getElementById("stat-total");
+      const statHighrisk = document.getElementById("stat-highrisk");
+      const statAvg = document.getElementById("stat-avg");
+      let latestEventId = {{ (events[0].event_id if events else "")|tojson }};
+
+      function formatNum(v, digits = 3) {
+        const n = Number(v ?? 0);
+        return Number.isFinite(n) ? n.toFixed(digits) : "0.000";
+      }
+
+      function escapeHtml(s) {
+        return String(s ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+
+      function showToast(message) {
+        toast.textContent = message;
+        toast.classList.add("visible");
+        window.setTimeout(() => toast.classList.remove("visible"), 4800);
+      }
+
+      function notifyBrowser(event) {
+        if (!("Notification" in window)) {
+          return;
+        }
+        if (Notification.permission !== "granted") {
+          return;
+        }
+        const threat = formatNum(event.threat_score);
+        const camera = event.camera_name || "unknown-camera";
+        new Notification("Security Alert", {
+          body: `${camera} threat=${threat}`,
+          tag: event.event_id,
+        });
+      }
+
+      async function requestNotificationPermission() {
+        if (!("Notification" in window)) {
+          showToast("Browser notifications are not supported on this browser.");
+          return;
+        }
+        const permission = await Notification.requestPermission();
+        if (permission === "granted") {
+          showToast("Browser alerts enabled.");
+        } else {
+          showToast("Browser alerts are blocked. You can still see alerts in this table.");
+        }
+      }
+
+      function renderEvents(events) {
+        if (!Array.isArray(events) || events.length === 0) {
+          eventsBody.innerHTML = '<tr><td colspan="9" class="empty">No alerts yet.</td></tr>';
+          return;
+        }
+
+        const rows = events.map((e) => {
+          const clip = e.clip_duration_seconds == null ? "-" : formatNum(e.clip_duration_seconds, 2);
+          const replay = e.replay_url
+            ? `<a class="replay-link" href="${escapeHtml(e.replay_url)}" target="_blank" rel="noopener">Replay</a>`
+            : "-";
+
+          return `
+            <tr>
+              <td>${escapeHtml(e.timestamp_utc || "-")}</td>
+              <td>${escapeHtml(e.camera_name || "-")}</td>
+              <td>${escapeHtml(e.alert_timestamp_utc || "-")}</td>
+              <td>${clip}</td>
+              <td>${formatNum(e.threat_score)}</td>
+              <td>${formatNum(e.cv)}</td>
+              <td>${formatNum(e.ca)}</td>
+              <td>${replay}</td>
+              <td class="mono">${escapeHtml(e.event_id || "-")}</td>
+            </tr>
+          `;
+        });
+
+        eventsBody.innerHTML = rows.join("");
+      }
+
+      function setMicUiState({
+        state = "unknown",
+        message = "",
+        rms = 0,
+        dbfs = -100,
+        abs_mean = 0,
+        abs_max = 0,
+        ok = false,
+      } = {}) {
+        if (!micStatusText || !micStatusNote || !micLevelFill) {
+          return;
+        }
+
+        micStatusText.classList.remove("status-good", "status-quiet", "status-error", "status-checking");
+
+        let label = "Unknown";
+        if (!ok || state === "error") {
+          label = "Mic Error";
+          micStatusText.classList.add("status-error");
+        } else if (state === "active") {
+          label = "Mic Active";
+          micStatusText.classList.add("status-good");
+        } else if (state === "quiet") {
+          label = "Mic Quiet";
+          micStatusText.classList.add("status-quiet");
+        } else {
+          micStatusText.classList.add("status-checking");
+        }
+
+        micStatusText.textContent = label;
+        micStatusNote.textContent = message || "No status message";
+
+        // Logarithmic level: float32 MIC is ~[-1,1]. Map dBFS so a quiet room sits low, speech fills up.
+        const r = Number(rms);
+        const hasRms = Number.isFinite(r) && r > 0;
+        const db = hasRms ? 20 * (Math.log(r) / Math.LN10) : Number(dbfs);
+        const lo = -58;
+        const hi = -22;
+        let level = (db - lo) / (hi - lo);
+        const peak = Number(abs_max) || 0;
+        level = Math.max(level, Math.min(0.25, peak * 0.35));
+        level = Math.min(1, Math.max(0, level));
+        micLevelFill.style.width = `${Math.round(level * 100)}%`;
+      }
+
+      async function refreshMicStatus() {
+        try {
+          const response = await fetch(MIC_STATUS_API_URL, { cache: "no-store" });
+          if (!response.ok) {
+            setMicUiState({ state: "error", ok: false, message: "mic status endpoint unavailable" });
+            return;
+          }
+          const status = await response.json();
+          setMicUiState(status);
+        } catch (_err) {
+          setMicUiState({ state: "error", ok: false, message: "cannot read microphone status" });
+        }
+      }
+
+      async function refreshEvents() {
+        try {
+          const response = await fetch(EVENTS_API_URL, { cache: "no-store" });
+          if (!response.ok) {
+            return;
+          }
+          const events = await response.json();
+          renderEvents(events);
+
+          if (!Array.isArray(events) || events.length === 0) {
+            return;
+          }
+
+          const newest = events[0];
+          if (newest.event_id && newest.event_id !== latestEventId) {
+            latestEventId = newest.event_id;
+            const threat = Number(newest.threat_score || 0);
+            if (threat >= ALERT_THRESHOLD) {
+              const camera = newest.camera_name || "unknown-camera";
+              showToast(`Alert from ${camera} | threat=${formatNum(threat)}`);
+              notifyBrowser(newest);
+            }
+          }
+        } catch (_err) {
+          // Keep dashboard resilient when network is unstable.
+        }
+      }
+
+      async function refreshStats() {
+        try {
+          const response = await fetch(STATS_API_URL, { cache: "no-store" });
+          if (!response.ok) return;
+          const s = await response.json();
+          if (statTotal) statTotal.textContent = s.total_events ?? "-";
+          if (statHighrisk) statHighrisk.textContent = s.high_risk_events ?? "-";
+          if (statAvg) statAvg.textContent = formatNum(s.avg_threat_score, 3);
+        } catch (_err) {
+          // ignore transient errors
+        }
+      }
+
+      if (enableAlertsBtn) {
+        enableAlertsBtn.addEventListener("click", requestNotificationPermission);
+      }
+
+      window.setInterval(refreshEvents, 4000);
+      window.setTimeout(refreshEvents, 800);
+      window.setInterval(refreshStats, 4000);
+      window.setTimeout(refreshStats, 1200);
+      window.setInterval(refreshMicStatus, 2500);
+      window.setTimeout(refreshMicStatus, 400);
+    </script>
+  </body>
+</html>

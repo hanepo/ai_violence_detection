@@ -1,0 +1,524 @@
+32
+Chapter 3: Methodology
+3.1 Chapter Introduction
+Based on the research gaps enumerated at the end of Chapter 2, this chapter
+anchors the research methodological blueprint for this project. There is a seamless
+transition from the conceptual argument for a multimodal edge AI system to its
+engineering blueprint in this chapter. The manner of research development, system
+architecture, various components, and validation process of the edge AI system will all
+be discussed in this chapter.
+Based on the objectives of research explored in the literature, this methodology has
+been designed to be transparent and easily reproducible. It begins with a discussion
+of the hybrid development approach utilized to implement this embedded AI system.
+Followed by the presentation of high-level system level architecture through block
+diagrams and flowcharts, showing interaction of sensors, Edge processor, and flow of
+information from acquisition to alert generation. The discussion then progresses to
+explain in-depth rationale behind software design and hardware components and
+software components such as dataset preparation, implementation, and fusion logic in
+software design and development. Finally, there’s a discussion on comprehensive
+testing and validation process that would measure system performance on these very
+objectives.
+The overall purpose of this chapter is to ensure that there is a comprehensive work
+plan that explains effectively how the identified gaps in the literature regarding
+modality, architecture, and context are to be met through technical implementation. By
+writing the methodology in a rigorous and explicit manner, it is guaranteed that the
+research process is systematic and capable of giving valid and reliable results.
+33
+3.2 Project Methodology Overview
+This project adopts the V-Model (Verification and Validation Model) for Embedded
+Systems Development. Unlike linear methodologies (such as Waterfall) or purely
+software-centric approaches (such as Agile), the V-Model is specifically selected for
+this research because it enforces a rigorous correspondence between the design of
+the physical hardware and the verification of its intelligent software components. The
+methodology is structured into three distinct phases that mirror the organization of this
+report, ensuring that every engineering specification is systematically traced to a
+validation result.
+Phase 1: The Design Phase (The Left Side)
+This phase focuses on the decomposition of the high-level problem into buildable
+engineering specifications ("Going Down" the V-Model).
+• Requirement Gathering (Chapter 1): The process begins with the definition of
+the core problem—the need for proactive bullying detection—and the
+establishment of the project's primary objectives.
+• System Analysis (Chapter 2): Guided by the critical analysis of existing
+technologies in the Literature Review, the system requirements are refined to
+address specific gaps, such as the need for edge-based privacy.
+• System & Module Design (Chapter 3): The requirements are translated into a
+detailed system architecture. This involves selecting the hardware platform
+(Raspberry Pi 5) and designing the software logic, including the specific AI
+models (YOLOv8n) and the multimodal fusion algorithm.
+Phase 2: Implementation (The Bottom - Execution)
+This phase represents the realization of the design into a physical prototype (detailed
+in Chapter 4).
+• Hardware Integration: The physical assembly of sensors, the 3D-printed
+enclosure, and the Raspberry Pi 5 computing unit.
+34
+• Software Coding: The translation of the design logic into executable Python
+code, including the implementation of the inference engines, ring buffers, and
+the MQTT alerting protocol.
+Phase 3: The Verification & Validation Phase (The Right Side)
+This phase systematically tests the system in ascending order of complexity ("Going
+Up" the V-Model) to prove the design functions as intended.
+• Unit & Integration Testing (Chapter 4): The individual software modules and
+hardware interfaces are verified in isolation to ensure correct operation (e.g.,
+verifying camera initialization and audio feature extraction).
+• System Testing (Chapter 4): The fully integrated prototype is subjected to
+comprehensive performance testing to measure key metrics such as detection
+accuracy and system latency.
+• Acceptance Testing (Chapter 5): Finally, the validated results are compared
+against the initial research objectives defined in Phase 1 to conclude whether
+the system successfully solves the stated problem.
+By adhering to this V-Model framework, the research ensures a transparent and
+traceable path from the initial conceptualization to the final validated prototype.
+Figure 3.1: The V-Model Framework Adapted by the Author.
+35
+3.3 Proposed System Architecture
+The proposed system architectures have been designed to implement the basic
+functions associated with multimodal sensing, edge processing, real-time analysis, as
+well as energy efficiency. The system architectures have been therefore designed with
+a focus on a centralized edge host that facilitates data acquisition, analysis, as well as
+data transmission. The system architectures have been designed utilizing a pipelining
+approach that ensures each system module, such as acquisition, inference, fusion, or
+notification, is distinctly separated. The system architectures have been therefore
+encapsulated using two main diagrams, namely a hardware system architectures block
+diagram, as illustrated in Figure 3.2, and a software operation flowchart, as illustrated
+in Figure 3.3.
+The hardware architecture, as presented in Figure 3.2, revolves around the Raspberry
+Pi 5. The selection of Raspberry Pi 5 is valid because of its balanced processing power,
+extensive IO capabilities, and feasibility of the cost, which is exactly what the
+Architectural Feasibility Dilemma demands. The Pi 5 is connected to three major
+sensors through dedicated channels: Raspberry Pi Camera Module 3 through the CSI2 port, which ensures best-in-class, latency-free videos; a USB Condenser Mic, which
+enables digital audio recording capability; and the Passive Infrared (PIR) sensor (HCSR501) through the GPIO pin, acting as the low-power motion sensor. The Raspberry
+Pi is supported through the 5V, 5A USB-C Power Adapter and shares the connection
+through the Ethernet LAN cable to the school network. The alert is transmitted through
+MQTT protocols. The sensitive information such as logs and videos is maintained
+encrypted through the SQLCipher database stored in the microSD card of the Pi.
+36
+Figure 3.2: Hardware System Architecture Block Diagram by the Author
+The logical flow of the software, shown in Figure 3.3, is controlled by a finite state
+machine optimized for 24/7 running. After the initialization phase, the machine enters
+a low-power mode Standby State, during which only the PIR sensor is continuously
+polled. This is an essential aspect of energy savings. Upon detecting a movement, the
+machine enters the Active State and activates the camera and microphone and starts
+filling ring buffers with video and audio streams. Simultaneously, the core task of the
+AI Inference & Fusion is processed: the vision model (YOLOv8n) analyzes each frame
+to identify violent behavior, and the audio model analyzes 2-second snippets to identify
+audio events. The outputs to the Fusion Score Calculation module are processed by a
+weighted decision-level fusion algorithm to compute a combined threat level. If it
+crosses a certain threshold, it triggers the Alerting Phase during which it performs the
+following actions one by one: logs the occurrence in the encrypted database, saves a
+record video, and broadcasts an MQTT message on the network. Then it goes back to
+the standby state.
+37
+Figure 3.3:System Operational Flowchart by the Author
+This unified architecture directly reflects the research aims. The multimodal sensor
+fusion logic and multimodal sensor integration solve the Modality Completeness Tradeoff problem. The application of the local edge device for processing meets the
+demands of the Architectural Feasibility Dilemma to fulfill privacy and low latency at
+the same time. Finally, the programmability and flexibility of each software component
+form the basis for the research aim of Contextual Validation to be accomplished.
+38
+3.4 Hardware Design & Implementation
+Hardware design is the process through which the system architecture is mapped
+to a hardware prototype that can be used for Functional Prototype Realization. This
+discussion will highlight the criteria used to select the hardware that is collectively
+responsible for ensuring compliance with the requirements for the Real-Time
+Multimodal Processing System that is cost-effective and meets the privacy
+requirements.
+3.4.1 Component Selection and Justification
+The choice of computer hardware components was made through careful
+consideration based on system requirement specifications arising from the aims and
+objectives of our study as a means of solving the Architectural Feasibility Dilemma.
+Each selected component represents a compromise between performance, power,
+compatibility, and market availability in Malaysia.
+Figure 3.4: Raspberry Pi 5
+• Edge Computing Host: Raspberry Pi 5 Model B (8GB RAM).
+o Justification: Raspberry Pi 5 was chosen as a central processing unit
+over other alternatives, which include NVIDIA Jetson Nano and Google
+Coral Dev Board. Although NVIDIA’s parallel inference capabilities via
+Jetson Nano are far superior, a Raspberry Pi 5 has a superior system on
+chip performance that is essential in processing activities related to
+sensor inputs, logic operations, and communication operations. The
+major advantages include:
+39
+▪ I/O Versatility: A Camera Serial Interface (CSI-2) for high
+bandwidth and low latency video, and several USB 3.0 ports for
+high fidelity audio.
+▪ Computational Adequacy: A quad-core ARM Cortex-A76
+processor with 2.4GHz speed is adequately powerful to
+simultaneously implement the optimized model for YOLOv8n and
+the audio CNN model in real time.
+▪ Cost and Ecosystem: It provides the strongest performance/cost
+ratio and community engagement and documentation, which
+helps in rapid prototyping and debugging.
+▪ Future-proofing: The integration of the PCIe 2.0 interface makes
+it easier to add accelerators specifically for neural networks in the
+future (e.g., Hailo-8L).
+Figure 3.5: Raspberry Pi Camera Module 3 (Wide Angle Lens)
+• Vision Sensor: Raspberry Pi Camera Module 3 (Wide-Angle Lens).
+o Justification: Selected for its natural compatability and optimized
+performance with the Raspberry Pi platform. The main points are:
+▪ CSI-2 Interface: This interface provides direct memory access
+(DMA) capabilities, ensuring seamless video transmission to the
+GPU or CPU, hence reducing latency and CPU overhead
+associated with using USB cameras.
+▪ Autofocus: Necessary in a corridor setup where the distance of
+the subject may change.
+▪ Form Factor: Small, lightweight, and easily mounted, with a wideangle lens suitable for covering a broad corridor sightline.
+40
+Figure 3.6: FIFINE K669B
+• Audio Sensor: USB Condenser Microphone - FIFINE K669B.
+o Justification: Use of a USB microphone over the analog microphone with
+the ADC circuit was preferred for its simplicity, reliability, and sound
+quality.
+▪ Plug-and-Play Integration: No longer requires designing and
+debugging an analog audio capturing circuit. It appears as a
+standard USB audio device to Raspberry Pi.
+▪ Sufficient Quality: Enables the recording of clear, directional
+sound that can be used for the classification of speech and
+acoustic events, given the nature of corridor acoustics.
+▪ Noise Reduction: Most models come with a basic noise-reduction
+system that enables the camera to separate the background noise
+created by the environment and to helps isolate foreground
+sounds.
+41
+Figure 3.7: HC-SR501 Passive Infrared (PIR) Motion Sensor.
+• Trigger Sensor: HC-SR501 Passive Infrared (PIR) Motion Sensor.
+o Justification: This sensor is essential for reaching the energy-efficient
+state machine. It serves as a "wake-up" call, allowing the energyconsuming camera, microphone, and AI models to be enabled only if
+required.
+▪ Low Power: Draws very little current while detecting the presence
+of the human body heat signal.
+▪ Digital Output: This provides a simple GPIO-compatibile high/low
+signal that is easy to poll when there is motion detected.
+▪ Adjustable Sensitivity: Involves adjusting the sensitivity of the
+detection range and period to correlate with the size of the
+corridors.
+42
+Figure 3.8: Official Raspberry Pi 5 USB-C Power Supply (5V,5A).
+• Power Supply: Official Raspberry Pi 5 USB-C Power Supply (5V,5A).
+o Justification: A reliable and stable power source cannot be compromised
+upon. When working with extreme CPU and GPU processing during dual
+model inferencing, it’s imperative to have a stable power supply of 5V
+and above 5A for a Raspberry Pi 5 board to avoid crashing and microSD
+card corruption.
+Figure 3. 9: Raspberry Pi 5 Heatsink and Active Cooler
+• Raspberry Pi 5 Heatsink and Active Cooler
+o Justification: The Raspberry Pi 5 runs computationally intensive tasks,
+especially when it handles two models at once making the tendency to
+be overheat by the process of it, without a good heat management such
+as the heatsink and active cooler, it will help to dissipate the heat causing
+the system to be smoothly and achieving the low latency promises.
+o Purpose: To prevent performance loss during heavy processing.
+43
+Figure 3.10: SanDisk Extreme A2 (64GB)
+• MicroSD Card (64GB+)
+o Justification:
+▪ Endurance: The system is always writing data to local storage, so
+a "high endurance" card, such as SanDisk Extreme A2, is
+required.
+▪ Privacy & Security: It contains the SQLCipher encrypted
+database, described as the “cornerstone of the system’s privacyby-design architecture”. This makes sure that the system does not
+violate the privacy requirements by storing video and audio
+information in their raw form.
+o Purpose: To be the "Data Security Foundation" and to provide system
+reliability.
+44
+3.4.2 Circuit Diagram
+Figure 3.11: Completed Circuit Diagram
+Based on the figure above, the completed circuit diagram shows how all the
+hardware components will be connected to the Raspberry Pi 5 as the main edge
+components completing the overall system.
+3.5 Software Design & Algorithm Specifications
+The software architecture implements the intelligence of the system, transforming
+raw sensor data into actionable alerts. This development is structured into three core
+streams: data preparation, algorithm implementation with fusion logic, and the user
+alert interface. The design prioritizes efficiency for edge deployment, modularity for
+testing, and robustness for reliable operation.
+45
+3.5.1 Multimodal Dataset Curation and Preparation
+Another important challenge faced by machine learning involves the mismatch that
+may occur between the training data sets and the context for which results need to be
+applied. To specifically overcome the issue described as the Contextual Applicability
+Void, as mentioned in Chapter 2, a combination of many data set approach is followed.
+Figure 3.12: RWF2000 dataset example.
+Figure 3.12 shows just a few of a so many video datasets that will be used to train
+the vision model as a baseline for the initial training that will be adopted for the system.
+It is a public, large video datasets containing 2000 clips that have two categories which
+are violent and non-violent, the name, RWF-2000 which can be translated into “Real
+world fight 2000”.
+Figure 3.13: Crowd Sourced Emotional Multimodal Actors Dataset (CREMA-D) Waveform
+46
+For an audio baseline’s dataset, Crowd-sourced Emotional Multimodal Actors
+shortform for CREMA-D will be used. Is a data set of 7,442 original clips from 91 actors.
+The sentences were presented using one of six different emotions such as anger,
+disgust, fear, happy neutral and sad. Also four different emotions levels (low, medium,
+high, and unspecified) as seen on the waveform of figure 3.13.
+Figure 3.14: AudioSet logo.
+Another baseline dataset for the audio are AudioSet, which contains a large
+collection of audio events. AudioSet consists of an expanding ontology of 632 audio
+event classes and a collection of 2,084,320 human-labeled 10-second sound clips
+drawn from YouTube videos.
+For the system to be fully adapted with the Malaysian school corridor, a custom dataset
+is developed:
+1. Simulated Scenarios: Volunteers act out a scripted set of interactions in a
+simulated environment that resembles a school. These scenes include not only
+good examples (such as physical altercations, yelling) but also key negative
+examples (such as play fighting, spirited discussion, shouting in celebration).
+2. Data Capture: Simulations will be captured using the actual hardware that is in
+the final prototype (Raspberry Pi Camera Module 3 and a USB mic).
+3. Data Annotation: The video dataset has annotations consisting of bounding
+boxes on individuals and action labels such as fighting, pushing, and neutral in
+YOLO annotation format, while audio files are annotated based on event
+classes such as aggressive shout, distressed cry, and so on.
+47
+4. Context-Specific Augmentation: To increase the generalizability of the model,
+context-specific augmentations are applied to the dataset as follows:
+o Visual: Color jitter for lighting variations, overlaying a simulation of school
+uniform colors (blue and white) on the subjects, and blur effects to add
+blur.
+o Auditory: Adding background noise that simulates the corridors of a high
+schooler at varying signal to noise ratios such as:
+▪ people talking in the distance.
+▪ footstep noise.
+▪ noise of lockers opening.
+This process enables the creation of a combined data set that ensures the basic
+knowledge of the public data is critically adapted to the visual and acoustic environment
+of the deployment.
+3.5.2 Algorithm Development and Fusion Logic
+The inference graph architecture is developed in Python with OpenCV for vision,
+Librosa for audio processing (feature extraction) , and TensorFlow Lite for executing
+the deep learning models. It features a modular graph architecture whereby the vision
+and audio models run in parallel with a fusion model merging the outputs.
+Figure 3.15: Yolov8 Logo
+1. Visual Inference Engine: Figure above shows the Yolov8 logo, a representation
+of the model family, YOLOv8n (nano) model is chosen, represents a smaller,
+faster, and less computationally heavy model within that same family, finetuned with the prepared dataset,will be trained on the Pytorch framework,
+exported to Tensorflow Lite, optimized for inference on the Raspberry Pi 5.
+Within each frame, the model does two key task which are person detection
+and pre-classification of action (fighting, throw) of the detected person. It
+provides bounding boxes, classes, confidence values (𝐶𝑣) of the output.
+48
+Figure 3.16: Features extracted from speech signals (MFCC)
+2. Audio Inference Engine: A lean 1D Convolutional Neural Network (CNN), based
+on the MobileNetV1D, has been developed in order to handle the spectrograms
+of MFCC features of audio segments of length 2 seconds. It has been trained
+to classify audio segments into appropriate classes concerning the
+classification of aggression (e.g., aggressive, distressed, or neutral) and
+provides a class and confidence level (𝐶𝑎). Figure above shows an example of
+a features extracted denoted by time and MFCC coefficients.
+3. Temporal Fusion Logic (Decision-Level): This logic represents the central
+innovation that solves Modality-Completeness Trade-off. It supports a decisionlevel fusion:
+a. Input Synchronization: A visual detection event with confidence 𝐶𝑣 at time
+𝑡 triggers the fusion module to fetch an audio clip from a ring buffer
+centered at time 𝑡.
+b. Threat Score Calculation: A weighted sum called a composite threat
+score (𝑆) is used:
+[𝑆 = α𝐶𝑣 + β𝐶𝑎
+]
+where 𝛼 and 𝛽 are adaptable weights representing the respective
+importance or weight of each modal. For example, 𝛽 could be set high in
+cases where audio has been identified as a strong source for
+disambiguation
+c. Thresholding & Decision: A decision is then made on 𝑆 relative to a
+threshold level (𝜏). If 𝑆 > 𝜏, then the system declares an incident of a
+“high-risk bullying situation" and enters an alerting stage. This allows the
+system to anticipate a level of risk through the gathering of correlations
+in line with both senses.
+49
+3.5.3 System Interface and Alert Mechanism
+Figure 3.17: Flask Logo
+The user interface and notification system are designed with minimal impact and
+maximum privacy in mind. A web dashboard, built using Flask as figure above logo
+shows, allows viewing the system status, viewing previous notification instances with
+anonymized thumbnails, and adjusting the sensitivity. The notification system, through
+the fusion logic, adheres to a strict protocol for preserving user privacy:
+1. Authenticated Local Logging: A secure SQLite database encrypts the encrypted
+record via SQLCipher. The record contains only the metadata: a timestamp,
+threat level (𝑆) computed, confidence in each individual modality (𝐶𝑣, 𝐶𝑎), and a
+pseudonymous event ID without storing the video or audio files in the storage
+drive.
+2. Evidence Preservation: A video clip that consists of 10 seconds, along with 5
+seconds before and after the trigger, is extracted from the ring buffer and saved
+as an encrypted file on a local microSD card that can be accessed only from a
+secured admin interface.
+3. Network Alerting: A messaging action consisting of a JSON payload is
+transmitted on the private MQTT topic (for example, “school/corridor_a/alerts”).
+The constraints for size of a JSON payload are as follows:
+{
+"device_id": "corridor_a_cam01",
+"timestamp": "2025-01-27T14:30:05Z",
+"threat_score": 0.92,
+"event_id": "encrypted_hash"
+}
+50
+This near-instantaneous notification message will then be received by
+authorized personnel such as teachers or security personnel running an MQTT
+client app on their PC or smartphone. This enables nearly instantaneous alerts
+and also crucially prevents the transfer of any personally identifiable information
+on the network, since the raw data from the sensor never leaves the edge
+device.
+This comprehensive software design also implements the intelligent behaviors stated
+in the research objectives, and it builds a system which perceives its environment in a
+multi-modal manner and transmits its findings in a timely and secure fashion after
+reasoning on the various threats detected by different sensors.
+3.6 Testing and Validation Plan
+The system will also undergo a thorough testing and verification procedure that will
+ensure the system is functional and satisfies the requirements of the stated research
+goals. To achieve traceability from component specifications to system verification, the
+system will undergo testing based on the V-Model approach (Balaji & Murugaiyan,
+2012). The system will undergo verification stages that will include the performance of
+units up to the system’s deployment in simulated environments.
+3.6.1 Functional Testing
+The first level of validation will be carried out using functional testing to ensure that
+each hardware and software element is functioning as required, both separately and
+as part of a series. This is achieved through unit testing and integration testing. For
+unit testing, individual software modules would be tested for independent validation. In
+regard to the video pipeline, the initialization function would be tested for its capability
+to properly acquire images at a resolution of 640x480 pixels with a frame rate of 15-20
+frames per second, thereby verifying that the ring buffer system is working properly. At
+the same time, for audio validation, functionality would be tested by verifying audio
+stream integrity and proper computation of Mel-frequency cepstral coefficients
+(MFCCs) for feature extraction (Ittichaichareon et al., 2012).
+51
+The hardware interface for the PIR sensor will be evaluated for functionality by
+ensuring the GPIO read function has switched to the correct state immediately after
+the motion detection trigger has been activated. As for the artificial intelligence
+modules, the YOLOv8n model (Jocher et al., 2023) as well as the CNN audio model
+will be imported for evaluation purposes to ensure that both models are capable of
+generating correct output based on sample input data. Moreover, data integrity as well
+as data security will be evaluated using the database module, wherein test data
+creation as well as read/write functionality will be performed on the SQLCipher
+database to ensure that encryption protocols are working as expected. Lastly,
+connectivity functionality will be evaluated using the MQTT client, wherein the
+capability for the system to send test alert messages will be confirmed for successful
+activation with the broker (Banks & Gupta, 2014).
+Following unit verification, integration testing will be evaluating how modules interact
+with each other. As part of this, it will be necessary to ensure that the wake-up signal
+for the camera sensor, as well as the microphone sensor, is triggered successfully
+when the system is idle. A key aspect of this testing will be evaluating the
+synchronization between the video stream and the associated audio buffer. For testing
+the software finite state machine, a complete pipeline will be tested, with all AI
+inference removed. This will simulate a motion trigger, capture, simulated inference,
+logic fusion, database logging, and MQTT alert notification, before the inclusion of the
+AI model.
+52
+3.6.2 Performance Metrics and Evaluation
+For evaluation, the integrated prototype will be measured for its performance on the
+basis of quantitative parameters that are directly linked to the research aims. For
+measuring the detection accuracy, a test dataset will be created by means of a
+specially designed contextual dataset. The main parameters for evaluation will be
+Precision, Recall, and F1-Score (Powers, 2011). The measure for achieving success
+will be set at an F1-Score value of more than 0.85. The performance of the multimodal
+system will be measured by comparing it to unimodal systems, such as vision-only and
+audio-only systems, to determine the exact performance benefit achieved by the
+sensor fusion logic.
+The system efficiency will be evaluated under active state load to ensure real-time
+relevance. The inference latency will be monitored through the average time taken to
+analyze one video frame and two seconds of audio. Furthermore, the end-to-end alert
+latency will be measured as the time taken from the end of the triggering activity to the
+reception of the MQTT notification in the control center. This latency is set to be below
+2 seconds. The system will be proven relevant to real-world deployment through its
+resilience against non-violent, ambiguous behaviors like play-fighting or gesturing.
+These behaviors will be employed to calculate the false positive rate per hour.
+3.6.3 Validation Scenario and Testing Protocol
+The last step in the plan is to verify the system as a whole in an environment that
+simulates the target deployment context. A simulated corridor setting, such as in the
+university hallways, would be chosen for the placement of the prototypes. Thirty
+scripted scenarios would be enacted by volunteers, consisting of 15 positive scenarios
+(representing physical and verbal aggression) and 15 negative scenarios (representing
+ambiguous or innocuous interactions).
+53
+For evaluating the flexibility of the system, these scenarios would be performed with
+different environmental variables such as lighting conditions (bright, normal, and
+dimmed lighting) and background noise. Data would be collected by manually
+recording ground truth. This would then be compared to the logs of the automated
+system to determine accuracy and latency as defined.
+3.6.4 Ethical Validation
+Procedural validation will take place to check that the project complies with ethics
+and privacy guidelines. A tight data handling policy will be enforced whereby all video
+and audio recordings of simulation activities are encrypted and available on a 'need to
+know' basis only. A data deletion plan will be set up towards the end of the project, and
+the data carried in the MQTT payload will be checked to make sure that it does not
+contain any Personally Identifiable Information.
+Operational transparency will be maintained through documentation of system logic,
+which will clearly differentiate its purpose as an anonymized alert system and not for
+surveillance or identification purposes. Lastly, safety for simulation will always come
+first, and all scripts used in simulating validation will be reviewed for safety among
+participants, with "stop" signals added to avoid any chance of physical harm in enacting
+aggressive scenes.
+54
+3.7 Project Timeline and Budget
+Table 3.1: Gantt Chart FYP 1
+FYP 1 W1 W2 W3 W4 W5 W6 W7 W8 W9 W10 W11 W12 W13 W14
+Project Title
+Literature Review
+Progress Report
+Project Proposal
+Title Defense Presentation
+Methodology
+Chapter 1, 2, 3
+Proposal Report
+Table 3.2: Gantt Chart FYP 2
+FYP 2 W1 W2 W3 W4 W5 W6 W7 W8 W9 W10 W11 W12 W13 W14
+Project Progress with
+Supervisor
+Progress Report
+Chapter 4
+Chapter 5
+Chapter 1
+Report Submission for
+Supervisor Review
+Report Submission for
+Panel Review
+Presentation &
+Demonstration
+Report Submission in
+Hardcover
+Planning is a critical phase in laying out a comprehensive roadmap for the project's
+lifecycle. This phase includes research work, analysis of the context in which the
+problem is situated, design of the proposed solution, identification of required hardware
+and software for the project, and laying out the timeline for the project.
+55
+The Gantt chart is a critical tool in project timeline illustration and monitoring of project
+progression in accordance with key project deadlines. As indicated in the above table,
+the graph indicates the entire project schedule for both FYP 1 and FYP 2. This includes
+the entire project development stages, right from project planning and prototyping,
+through data analysis and discussions to project submission.
+Table 3.3: Budget of the Project
+No. Item Description Price (RM)
+Devices (Existing Assets)
+1 Laptop (Own) For system development, coding, and AI model 2,000.00
+2 Smartphone / PC (Own) For receiving MQTT alerts and viewing the web 1,000.00
+dashboard.
+Hardware & Software Components
+3 Raspberry Pi 5 (8GB) Central processing unit for real-time Edge AI inference. 480.00
+4 Camera Module 3 Wide-angle visual sensor for corridor monitoring. 160.00
+5 USB Condenser Mic High-fidelity audio input (e.g., FIFINE K669B). 130.00
+6 HC-SR501 PIR Sensor Passive Infrared sensor for motion-based wake-up. 8.00
+7 Power Supply (Own) 27W (5V/5A) USB-C power supply. 60.00
+8 MicroSD Card (Own) 64GB+ High-endurance storage for OS and DB. 50.00
+9 Active Cooler Thermal management solution for the SoC. 30.00
+10 Enclosure Custom housing (Acrylic/PLA) for wall mounting. 40.00
+11 Ethernet Cable (Own) Connectivity for local network MQTT alerts. 15.00
+12 Software Libraries Python, OpenCV, PyTorch, SQLCipher (Open
+Source).
+0.00
+TOTAL Project Cost (Excluding Owned Items) 848.00
+This section describes the estimated cost for the project and the resources needed to
+carry it out as planned, thus proving its viability in the constraints of an academic
+research environment. The budget is divided into hardware costs, software/resource
+costs, and contingency budget.
+Subtotal(Devices) 3,000.00
+Subtotal(Components) 973.00
+56
+3.8 Chapter Summary
+This chapter has outlined a full and rigorous approach for the realization of the Edge
+AI Multimodal Violence Detector that follows the V-Model (Verification and Validation
+Model). The approach was developed taking into account the specific challenges of
+the embedded AI system project that combines physical components, smart
+algorithms, and strict ethical requirements in a fixed academic timeframe.
+Together, this chapter presents a work plan that is transparent, reproducible, and
+academically justifiable. This work plan ensures that the following implementation
+(Chapter 4) on final year project 2 is carried out on the basis of this specification and
+that the system to be developed can be validated. This completes the logic loop of the
+V-Model directly to address the research gaps mentioned in Chapter 2. The basis
+established now enables the transition from design to development.
