@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import threading
 from typing import Tuple
 
 import librosa
@@ -10,6 +11,13 @@ try:
     import sounddevice as sd
 except Exception:  # pragma: no cover
     sd = None
+
+# macOS/PortAudio: simultaneous sd.rec (live dashboard + mic probe) errors or hangs without a lock.
+_sd_io_lock = threading.Lock()
+
+
+def sounddevice_available() -> bool:
+    return sd is not None
 
 
 class AudioStream:
@@ -21,14 +29,15 @@ class AudioStream:
         self._input_sample_rate = None
 
     def _capture(self, n_samples: int, samplerate: int, device=None) -> np.ndarray:
-        chunk = sd.rec(
-            n_samples,
-            samplerate=samplerate,
-            channels=self.channels,
-            dtype="float32",
-            device=device,
-        )
-        sd.wait()
+        with _sd_io_lock:
+            chunk = sd.rec(
+                n_samples,
+                samplerate=samplerate,
+                channels=self.channels,
+                dtype="float32",
+                device=device,
+            )
+            sd.wait()
         return chunk.squeeze()
 
     def read_chunk(self) -> tuple[np.ndarray, datetime]:

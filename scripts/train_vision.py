@@ -222,7 +222,7 @@ def train(
     )
 
     model.compile(
-        optimizer=tf.keras.optimizers.legacy.Adam(1e-3),
+        optimizer=tf.keras.optimizers.Adam(1e-3),
         loss="binary_crossentropy",
         metrics=["accuracy", tf.keras.metrics.Precision(), tf.keras.metrics.Recall()],
     )
@@ -235,7 +235,7 @@ def train(
         layer.trainable = False
 
     model.compile(
-        optimizer=tf.keras.optimizers.legacy.Adam(1e-4),
+        optimizer=tf.keras.optimizers.Adam(1e-4),
         loss="binary_crossentropy",
         metrics=["accuracy", tf.keras.metrics.Precision(), tf.keras.metrics.Recall()],
     )

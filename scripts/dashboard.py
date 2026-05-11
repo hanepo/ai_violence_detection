@@ -25,7 +25,7 @@ if str(ROOT_DIR) not in sys.path:
 os.environ.setdefault("ENABLE_TFLITE", "1")
 
 from utils.config import load_settings
-from utils.audio import AudioStream
+from utils.audio import AudioStream, extract_mfcc, sounddevice_available
 from utils.db import EventDatabase, EventRecord
 from utils.fusion import compute_fusion_score
 from utils.inference import AudioInference, VisionInference
@@ -60,6 +60,18 @@ _mic_status_cache_ts = 0.0
 
 
 def _probe_mic_status() -> dict[str, object]:
+    if not sounddevice_available():
+        return {
+            "ok": True,
+            "state": "unavailable",
+            "message": "sounddevice not installed — pip install sounddevice (needs PortAudio). Live audio fusion will use silence.",
+            "rms": 0.0,
+            "dbfs": -100.0,
+            "abs_mean": 0.0,
+            "abs_max": 0.0,
+            "nonzero_ratio": 0.0,
+        }
+
     chunk_seconds = min(0.6, max(0.25, settings.audio_chunk_seconds * 0.25))
     try:
         stream = AudioStream(
@@ -70,9 +82,9 @@ def _probe_mic_status() -> dict[str, object]:
         chunk, _ = stream.read_chunk()
         if chunk is None or chunk.size == 0:
             return {
-                "ok": False,
-                "state": "error",
-                "message": "no audio samples",
+                "ok": True,
+                "state": "quiet",
+                "message": "no samples captured (check mic permission in System Settings)",
                 "rms": 0.0,
                 "dbfs": -100.0,
                 "abs_mean": 0.0,
@@ -101,10 +113,17 @@ def _probe_mic_status() -> dict[str, object]:
             "nonzero_ratio": nonzero_ratio,
         }
     except Exception as exc:
+        msg = str(exc).strip() or exc.__class__.__name__
+        # PortAudio often throws if another thread is recording; avoid scary "error" UI.
+        soft = "busy" in msg.lower() or "input overflow" in msg.lower() or "portaudio" in msg.lower()
         return {
-            "ok": False,
-            "state": "error",
-            "message": f"mic probe failed: {str(exc)[:140]}",
+            "ok": True,
+            "state": "quiet" if soft else "error",
+            "message": (
+                "Microphone busy (live feed is recording). Status will update when idle."
+                if soft
+                else f"mic probe failed: {msg[:140]}"
+            ),
             "rms": 0.0,
             "dbfs": -100.0,
             "abs_mean": 0.0,
@@ -511,7 +530,14 @@ def _build_upload_result(video_result: dict | None, audio_result: dict | None) -
         fusion_score = fusion_ca
         fusion_is_alert = bool(fusion_score >= settings.audio_aggressive_threshold)
     else:
-        fusion = compute_fusion_score(cv=cv, ca=ca, alpha=settings.alpha, beta=settings.beta, threshold=settings.threshold)
+        fusion = compute_fusion_score(
+            cv=cv,
+            ca=ca,
+            alpha=settings.alpha,
+            beta=settings.beta,
+            threshold=settings.threshold,
+            audio_alert_threshold=settings.audio_aggressive_threshold,
+        )
         fusion_cv = fusion.cv
         fusion_ca = fusion.ca
         fusion_score = fusion.score
@@ -553,6 +579,10 @@ def dashboard() -> str:
         stats=stats,
         events=events,
         alert_threshold=settings.threshold,
+        alert_cooldown_seconds=settings.alert_cooldown_seconds,
+        audio_aggressive_threshold=settings.audio_aggressive_threshold,
+        fusion_alpha=settings.alpha,
+        fusion_beta=settings.beta,
     )
 
 
@@ -664,13 +694,15 @@ def api_mic_status():
 def event_clip_file(filename: str):
     output_dir = _resolve_output_dir()
     if filename.lower().endswith(".mp4"):
+        # conditional=True can break Range probes on some dev servers; clips are small.
         return send_from_directory(
             output_dir,
             filename,
             mimetype="video/mp4",
-            conditional=True,
+            max_age=0,
+            conditional=False,
         )
-    return send_from_directory(output_dir, filename)
+    return send_from_directory(output_dir, filename, max_age=0)
 
 
 @app.get("/uploads/<path:filename>")
@@ -709,7 +741,15 @@ def uploaded_preview_stream(filename: str):
     )
 
 
-def _save_live_alert_event(frames_snapshot: list, threat_score: float, cv_score: float) -> None:
+def _save_live_alert_event(
+    frames_snapshot: list,
+    threat_score: float,
+    cv_score: float,
+    ca_score: float,
+    mode_label: str,
+    *,
+    motion_level: float | None = None,
+) -> None:
     """Save a confirmed live-camera alert: write the clip MP4 and insert a DB record.
 
     Runs in a daemon background thread so the camera stream is never blocked.
@@ -727,11 +767,14 @@ def _save_live_alert_event(frames_snapshot: list, threat_score: float, cv_score:
             "device_id": settings.device_id,
             "camera_name": settings.camera_name,
             "mode": "dashboard_live",
+            "fusion_mode": mode_label,
             "alert_timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "clip_duration_seconds": round(clip_duration, 3),
             "video_frames": len(frames_snapshot),
             "source": "dashboard_camera_feed",
         }
+        if motion_level is not None:
+            metadata["scene_motion_at_save"] = round(float(motion_level), 5)
 
         db = EventDatabase(_resolve_db_path())
         db.insert_event(
@@ -739,7 +782,7 @@ def _save_live_alert_event(frames_snapshot: list, threat_score: float, cv_score:
                 event_id=event_id,
                 threat_score=threat_score,
                 cv=cv_score,
-                ca=0.0,
+                ca=ca_score,
                 video_path=str(clip_path),
                 metadata_json=json.dumps(metadata),
             )
@@ -751,103 +794,249 @@ def _save_live_alert_event(frames_snapshot: list, threat_score: float, cv_score:
 
 @app.get("/camera-feed")
 def camera_feed() -> Response:
+    # Read request args here — the request context is torn down before the
+    # generator body runs, so accessing request.args inside the generator fails.
+    _use_vision = request.args.get("vision", "1") != "0"
+    _use_audio = request.args.get("audio", "1") != "0"
+
     def generate_frames():
-        stream = _get_or_create_camera_stream()
+        use_vision = _use_vision
+        use_audio = _use_audio
+        if not use_vision and not use_audio:
+            # Both off (bad client state) → same as full multimodal, not vision-only + silent audio.
+            use_vision = True
+            use_audio = True
 
-        frame = None
-        for _ in range(40):
-            frame, _ = stream.read()
-            if frame is not None:
-                break
-            time.sleep(0.05)
+        if use_vision and use_audio:
+            mode_label = "combined"
+            t_hyst = settings.threshold
+        elif use_vision:
+            mode_label = "vision_only"
+            t_hyst = settings.threshold
+        else:
+            mode_label = "audio_only"
+            t_hyst = settings.audio_aggressive_threshold
 
-        if frame is None:
-            _reset_camera_stream()
+        on_threshold = min(1.0, t_hyst + max(0.02, settings.live_alert_enter_margin))
+        off_threshold = max(0.0, t_hyst - max(0.01, settings.live_alert_exit_margin))
+
+        stream: VideoCaptureStream | None = None
+        if use_vision:
             stream = _get_or_create_camera_stream()
+
+        h, w = settings.frame_height, settings.frame_width
+        black_tpl = np.zeros((h, w, 3), dtype=np.uint8)
+        cv2.putText(black_tpl, "Vision disabled — audio-only mode",
+                    (12, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (160, 160, 160), 2)
+
+        # ── Shared inference state (written by background threads, read by display loop) ──
+        _infer_lock = threading.Lock()
+        _cv_score: list[float] = [0.0]
+        _ca_score: list[float] = [0.0]
+        _audio_ready: list[bool] = [False]   # False until first real audio result
+        _stop = [False]
+
+        # ── Vision inference thread ──
+        # Runs TFLite on a frame sampled from the camera at inference rate.
+        # Decoupled from the display loop so slow inference doesn't drop frames.
+        def _vision_worker() -> None:
+            while not _stop[0]:
+                if stream is None:
+                    time.sleep(0.05)
+                    continue
+                f, _ = stream.read()
+                if f is None:
+                    time.sleep(0.05)
+                    continue
+                score = vision_model.score(f)
+                with _infer_lock:
+                    _cv_score[0] = float(score)
+
+        # ── Audio inference thread ──
+        # read_chunk() blocks for chunk_seconds — running it here keeps the
+        # display loop free to deliver frames at camera rate.
+        def _audio_worker() -> None:
+            audio_stream = AudioStream(
+                sample_rate=settings.audio_sample_rate,
+                channels=settings.audio_channels,
+                chunk_seconds=settings.audio_chunk_seconds,
+            )
+            while not _stop[0]:
+                wav, _ = audio_stream.read_chunk()
+                mfcc = extract_mfcc(wav, settings.audio_sample_rate)
+                score = audio_model.score(mfcc)
+                with _infer_lock:
+                    _ca_score[0] = float(score)
+                    _audio_ready[0] = True
+
+        workers: list[threading.Thread] = []
+        if use_vision:
+            t = threading.Thread(target=_vision_worker, daemon=True)
+            t.start()
+            workers.append(t)
+        if use_audio:
+            t = threading.Thread(target=_audio_worker, daemon=True)
+            t.start()
+            workers.append(t)
+
+        # Wait up to 2 s for the first camera frame.
+        first_frame: np.ndarray | None = None
+        if stream is not None:
             for _ in range(40):
-                frame, _ = stream.read()
-                if frame is not None:
+                first_frame, _ = stream.read()
+                if first_frame is not None:
                     break
                 time.sleep(0.05)
 
-        if frame is None:
-            return
+        if first_frame is None and use_vision:
+            first_frame = np.zeros((h, w, 3), dtype=np.uint8)
+            cv2.putText(first_frame, "Camera initializing...", (12, h // 2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (100, 100, 255), 2)
 
-        # Temporal smoothing to reduce frame-level prediction jitter.
-        score_hist: deque[float] = deque(maxlen=12)
+        score_hist_cv: deque[float] = deque(maxlen=max(6, settings.live_score_window))
+        score_hist_ca: deque[float] = deque(maxlen=max(6, settings.live_score_window))
         alert_active = False
-        on_threshold = min(1.0, settings.threshold + 0.08)
-        off_threshold = max(0.0, settings.threshold - 0.08)
         consecutive_on = 0
         consecutive_off = 0
+        prev_alert_active = False
+        prev_gray_small: np.ndarray | None = None
 
-        # Ring buffer: keep enough frames for a pre+post event clip.
         _live_fps = max(settings.fps, 1)
         _buf_seconds = settings.pre_event_seconds + settings.post_event_seconds + 5
         frame_buffer: deque = deque(maxlen=_buf_seconds * _live_fps)
         last_alert_ts = 0.0
+        target_dt = 1.0 / _live_fps
 
-        empty_reads = 0
-        while True:
-            if frame is None:
-                empty_reads += 1
-                if empty_reads >= 15:
-                    _reset_camera_stream()
-                    stream = _get_or_create_camera_stream()
-                    empty_reads = 0
-                time.sleep(0.03)
-                frame, _ = stream.read()
-                continue
+        try:
+            while True:
+                t0 = time.monotonic()
 
-            empty_reads = 0
-            frame_buffer.append(frame.copy())
+                if use_vision:
+                    if stream is None:
+                        return
+                    display_frame, _ = stream.read()
+                    if display_frame is None:
+                        display_frame = first_frame if first_frame is not None else np.zeros((h, w, 3), dtype=np.uint8)
+                else:
+                    display_frame = black_tpl.copy()
 
-            raw_score = vision_model.score(frame)
-            score_hist.append(raw_score)
-            smooth_score = float(sum(score_hist) / len(score_hist))
+                frame_buffer.append(display_frame)
 
-            if smooth_score >= on_threshold:
-                consecutive_on += 1
-                consecutive_off = 0
-            elif smooth_score <= off_threshold:
-                consecutive_off += 1
-                consecutive_on = 0
+                # Cheap scene motion (normalized mean abs diff on a tiny gray frame).
+                motion_level = 0.0
+                if use_vision:
+                    small = cv2.resize(display_frame, (64, 36))
+                    gray_small = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
+                    if prev_gray_small is not None:
+                        motion_level = float(np.mean(np.abs(gray_small - prev_gray_small)))
+                    prev_gray_small = gray_small
 
-            # Hysteresis and consecutive-frame confirmation avoids flickering labels.
-            if not alert_active and consecutive_on >= 3:
-                alert_active = True
-            if alert_active and consecutive_off >= 5:
-                alert_active = False
+                # Snapshot latest inference scores (written by background threads).
+                with _infer_lock:
+                    cv_raw = _cv_score[0]
+                    ca_raw = _ca_score[0]
+                    audio_ready = _audio_ready[0]
 
-            # Save event + clip when alert becomes confirmed and cooldown has elapsed.
-            now_ts = time.time()
-            if alert_active and (now_ts - last_alert_ts) > settings.alert_cooldown_seconds:
-                last_alert_ts = now_ts
-                snapshot = list(frame_buffer)
-                t = threading.Thread(
-                    target=_save_live_alert_event,
-                    args=(snapshot, smooth_score, smooth_score),
-                    daemon=True,
+                if use_vision:
+                    score_hist_cv.append(cv_raw)
+                smooth_cv = float(sum(score_hist_cv) / len(score_hist_cv)) if score_hist_cv else None
+
+                # Pass None until the audio thread has produced its first real result.
+                # Passing 0.0 would drag the fusion score below threshold and suppress alerts.
+                smooth_ca = None
+                if use_audio and audio_ready:
+                    score_hist_ca.append(ca_raw)
+                    smooth_ca = float(sum(score_hist_ca) / len(score_hist_ca))
+
+                fusion = compute_fusion_score(
+                    smooth_cv,
+                    smooth_ca,
+                    settings.alpha,
+                    settings.beta,
+                    settings.threshold,
+                    audio_alert_threshold=settings.audio_aggressive_threshold,
                 )
-                t.start()
 
-            label = "violent-risk" if alert_active else "normal"
-            color = (0, 0, 255) if label == "violent-risk" else (0, 200, 0)
-            cv2.putText(frame, f"{label} {smooth_score:.3f}", (12, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
-            cv2.putText(frame, f"raw {raw_score:.3f}", (12, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (220, 220, 220), 2)
+                if fusion.score >= on_threshold:
+                    consecutive_on += 1
+                    consecutive_off = 0
+                elif fusion.score <= off_threshold:
+                    consecutive_off += 1
+                    consecutive_on = 0
 
-            ret, buffer = cv2.imencode(".jpg", frame)
-            if not ret:
-                frame, _ = stream.read()
-                continue
-            chunk = buffer.tobytes()
-            yield (b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + chunk + b"\r\n")
+                live_on = max(1, settings.live_on_frames)
+                live_off = max(1, settings.live_off_frames)
+                if not alert_active and consecutive_on >= live_on:
+                    alert_active = True
+                if alert_active and consecutive_off >= live_off:
+                    alert_active = False
 
-            frame, _ = stream.read()
+                now_ts = time.time()
+                rising_alert = alert_active and not prev_alert_active
+                prev_alert_active = alert_active
+
+                clip_threshold = min(1.0, t_hyst + max(0.0, settings.live_clip_score_margin))
+                score_eligible = fusion.score >= clip_threshold
+                motion_needed = settings.live_clip_require_motion and use_vision
+                motion_eligible = (not motion_needed) or (motion_level >= settings.live_clip_motion_min)
+
+                if (
+                    rising_alert
+                    and score_eligible
+                    and motion_eligible
+                    and (now_ts - last_alert_ts) > settings.alert_cooldown_seconds
+                ):
+                    last_alert_ts = now_ts
+                    snapshot = list(frame_buffer)
+                    th = threading.Thread(
+                        target=_save_live_alert_event,
+                        args=(snapshot, fusion.score, fusion.cv, fusion.ca, mode_label),
+                        kwargs={"motion_level": motion_level if use_vision else None},
+                        daemon=True,
+                    )
+                    th.start()
+
+                overlay = display_frame.copy()
+                v_txt = f"Vision: {smooth_cv:.3f}" if smooth_cv is not None else "Vision: off"
+                a_txt = f"Audio:  {smooth_ca:.3f}" if smooth_ca is not None else "Audio:  off"
+                c_txt = f"Combined: {fusion.score:.3f} (thr {t_hyst:.2f})"
+                status = "ALERT" if alert_active else "OK"
+                clr_stat = (0, 0, 255) if alert_active else (0, 220, 120)
+
+                cv2.putText(overlay, v_txt, (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (0, 220, 255), 2)
+                cv2.putText(overlay, a_txt, (12, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (255, 0, 255), 2)
+                cv2.putText(overlay, c_txt, (12, 84), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (255, 255, 255), 2)
+                cv2.putText(overlay, f"Mode: {mode_label}", (12, 112), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 230, 180), 2)
+                cv2.putText(overlay, f"{status}  min gap {settings.alert_cooldown_seconds:.0f}s",
+                            (12, 142), cv2.FONT_HERSHEY_SIMPLEX, 0.58, clr_stat, 2)
+
+                ret, buf = cv2.imencode(".jpg", overlay, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                if ret:
+                    yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n")
+
+                # Rate-limit to target FPS; don't spin at 100 % CPU.
+                elapsed = time.monotonic() - t0
+                remaining = target_dt - elapsed
+                if remaining > 0:
+                    time.sleep(remaining)
+        finally:
+            _stop[0] = True
 
     return Response(generate_frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
 
 
+def _shutdown_dashboard(signum: int | None = None, frame: object | None = None) -> None:
+    """Release camera handles; OpenCV/macOS backends can otherwise delay SIGINT handling."""
+    _reset_camera_stream()
+    os._exit(0)
+
+
 if __name__ == "__main__":
+    import signal
+
+    # Second Ctrl+C still works via default handler after threads wind down.
+    signal.signal(signal.SIGINT, lambda s, f: _shutdown_dashboard(s, f))
+    signal.signal(signal.SIGTERM, lambda s, f: _shutdown_dashboard(s, f))
+
     debug_mode = os.getenv("FLASK_DEBUG", "0") == "1"
-    app.run(host="0.0.0.0", port=5050, debug=debug_mode)
+    app.run(host="0.0.0.0", port=5050, debug=debug_mode, use_reloader=False)

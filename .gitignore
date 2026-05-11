@@ -12,16 +12,21 @@ build/
 # Local / secrets
 .env
 .kaggle/
+kaggle.json
 *.pem
 
 # IDE / OS
 .DS_Store
 .idea/
 .vscode/
+.claude/
 
 # Runtime artifacts (regenerated locally)
 logs/
 output/
+
+# Training run bundles (optional to commit)
+models/audio_training_report/
 
 # Large media datasets — use scripts/download_datasets.py or your own data
 dataset/

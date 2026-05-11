@@ -1,0 +1,37 @@
+{
+  "model": "/Users/user/Downloads/ai-security-system/models/audio.tflite",
+  "data_dir": "/Users/user/Downloads/ai-security-system/dataset/audio",
+  "classes": [
+    "aggressive",
+    "distressed",
+    "neutral"
+  ],
+  "split_sizes": {
+    "train": 5272,
+    "val": 1129,
+    "test": 1131
+  },
+  "metrics": {
+    "train": {
+      "accuracy": 0.6891122913505311,
+      "precision": 0.6784138663488134,
+      "recall": 0.7125335969444473,
+      "f1": 0.6878949276764582,
+      "loss": 0.5051105461310758
+    },
+    "val": {
+      "accuracy": 0.6660761736049602,
+      "precision": 0.6585329203008234,
+      "recall": 0.6823590542474366,
+      "f1": 0.6645509644168842,
+      "loss": 0.5204960931768156
+    },
+    "test": {
+      "accuracy": 0.667550839964633,
+      "precision": 0.654357298730139,
+      "recall": 0.6814465174523141,
+      "f1": 0.6616790124647163,
+      "loss": 0.5269015893114928
+    }
+  }
+}

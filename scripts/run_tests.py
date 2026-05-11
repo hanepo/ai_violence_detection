@@ -324,11 +324,30 @@ def test_fusion() -> None:
         assert f.score <= 1.0, f"score {f.score} should be clamped to 1.0"
         check("Fusion score clamped to [0, 1]", True, f"score={f.score:.4f}")
 
+    def t_cv_none_audio_only():
+        f = compute_fusion_score(
+            cv=None,
+            ca=0.85,
+            alpha=0.6,
+            beta=0.4,
+            threshold=0.35,
+            audio_alert_threshold=0.5,
+        )
+        assert abs(f.score - 0.85) < 1e-5 and f.is_alert is True
+        check("Audio-only path (Cv=None)", True, f"score={f.score:.3f}")
+
+    def t_neither_modal():
+        f = compute_fusion_score(cv=None, ca=None, alpha=0.6, beta=0.4, threshold=0.35)
+        assert f.score == 0.0 and f.is_alert is False
+        check("Both None → no score", True)
+
     run_test("Fusion formula", t_basic)
     run_test("Alert above threshold", t_above_threshold)
     run_test("No alert below threshold", t_below_threshold)
     run_test("Fusion with Ca=None", t_ca_none)
     run_test("Fusion score clamped", t_clamp)
+    run_test("Audio-only fusion", t_cv_none_audio_only)
+    run_test("Neither modality", t_neither_modal)
 
 
 # ── ring buffer ───────────────────────────────────────────────────────────────
@@ -531,9 +550,12 @@ def test_end_to_end_fusion() -> None:
         ca_score = audio_model.score(mfcc)
 
         fusion = compute_fusion_score(
-            cv=cv_score, ca=ca_score,
-            alpha=settings.alpha, beta=settings.beta,
+            cv=cv_score,
+            ca=ca_score,
+            alpha=settings.alpha,
+            beta=settings.beta,
             threshold=settings.threshold,
+            audio_alert_threshold=settings.audio_aggressive_threshold,
         )
         check(
             "End-to-end fusion on fight frame",

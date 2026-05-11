@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
 
 @dataclass
 class Settings:
@@ -34,6 +36,10 @@ class Settings:
     beta: float = float(os.getenv("FUSION_BETA", "0.4"))
     threshold: float = float(os.getenv("FUSION_THRESHOLD", "0.35"))
 
+    # Multimodal switches (edge + dashboard can mirror via query string).
+    enable_vision: bool = os.getenv("ENABLE_VISION", "1") == "1"
+    enable_audio: bool = os.getenv("ENABLE_AUDIO", "1") == "1"
+
     camera_index: int = int(os.getenv("CAMERA_INDEX", "0"))
     fps: int = int(os.getenv("VIDEO_FPS", "15"))
     frame_width: int = int(os.getenv("VIDEO_WIDTH", "640"))
@@ -44,9 +50,20 @@ class Settings:
     active_window_seconds: float = float(os.getenv("ACTIVE_WINDOW_SECONDS", "10.0"))
     alert_cooldown_seconds: float = float(os.getenv("ALERT_COOLDOWN_SECONDS", "8.0"))
     live_score_window: int = int(os.getenv("LIVE_SCORE_WINDOW", "6"))
-    live_on_frames: int = int(os.getenv("LIVE_ON_FRAMES", "3"))
-    live_off_frames: int = int(os.getenv("LIVE_OFF_FRAMES", "5"))
+    # Frames the fused score must stay in the "high" band before ALERT arms (reduces noise).
+    live_on_frames: int = int(os.getenv("LIVE_ON_FRAMES", "12"))
+    # Frames in the "low" band before ALERT clears.
+    live_off_frames: int = int(os.getenv("LIVE_OFF_FRAMES", "8"))
     live_hysteresis: float = float(os.getenv("LIVE_HYSTERESIS", "0.05"))
+
+    # Live clip saving: stricter than fusion.alert — require score this far above mode threshold to count "on".
+    live_alert_enter_margin: float = float(os.getenv("LIVE_ALERT_ENTER_MARGIN", "0.10"))
+    live_alert_exit_margin: float = float(os.getenv("LIVE_ALERT_EXIT_MARGIN", "0.06"))
+    # Extra bar on top of threshold before we actually write a clip (rising edge).
+    live_clip_score_margin: float = float(os.getenv("LIVE_CLIP_SCORE_MARGIN", "0.03"))
+    # Ignore model spikes when the scene is nearly static (vision / combined only).
+    live_clip_require_motion: bool = os.getenv("LIVE_CLIP_REQUIRE_MOTION", "1") == "1"
+    live_clip_motion_min: float = float(os.getenv("LIVE_CLIP_MOTION_MIN", "0.014"))
 
     audio_sample_rate: int = int(os.getenv("AUDIO_SAMPLE_RATE", "16000"))
     audio_channels: int = int(os.getenv("AUDIO_CHANNELS", "1"))
@@ -85,4 +102,17 @@ def load_settings() -> Settings:
     settings = Settings()
     settings.output_dir.mkdir(parents=True, exist_ok=True)
     settings.db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Default VISION_MODEL_PATH may point at a missing file in-repo; pick the first alternative.
+    if not os.getenv("VISION_MODEL_PATH"):
+        vp = Path(settings.vision_model_path)
+        if not vp.is_absolute():
+            vp = _REPO_ROOT / vp
+        if not vp.exists():
+            for name in ("models/vision_2.tflite", "models/vision_new.tflite"):
+                cand = _REPO_ROOT / name
+                if cand.exists():
+                    settings.vision_model_path = name
+                    break
+
     return settings

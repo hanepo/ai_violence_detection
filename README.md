@@ -179,11 +179,16 @@ export AUDIO_AGGRESSIVE_THRESHOLD=0.18
 # export USE_MOCK_PIR=0
 # export PIR_PIN=17
 
-# Live stability controls (recommended defaults)
+# Live dashboard / clip recording (reduce false positives; see scripts/dashboard.py)
 export LIVE_SCORE_WINDOW=6
-export LIVE_ON_FRAMES=3
-export LIVE_OFF_FRAMES=5
+export LIVE_ON_FRAMES=12
+export LIVE_OFF_FRAMES=8
 export LIVE_HYSTERESIS=0.05
+export LIVE_ALERT_ENTER_MARGIN=0.10
+export LIVE_ALERT_EXIT_MARGIN=0.06
+export LIVE_CLIP_SCORE_MARGIN=0.03
+export LIVE_CLIP_REQUIRE_MOTION=1
+export LIVE_CLIP_MOTION_MIN=0.014
 export ALERT_COOLDOWN_SECONDS=8.0
 
 # Upload test sensitivity tuning (reduce misses on difficult violence clips)

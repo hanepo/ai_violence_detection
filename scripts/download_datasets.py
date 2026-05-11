@@ -21,6 +21,16 @@ DATASETS = {
         "target_dir": "dataset/raw/cremad",
         "description": "CREMA-D emotion speech dataset",
     },
+    "audio_violence": {
+        "slug": "fangfangz/audio-based-violence-detection-dataset",
+        "target_dir": "dataset/raw/audio_violence_youtube",
+        "description": "YouTube violence vs non-violence (WAV) — use Violence/ as extra aggressive",
+    },
+    "audio_esc50": {
+        "slug": "mmoreaux/environmental-sound-classification-50",
+        "target_dir": "dataset/raw/esc50",
+        "description": "ESC-50 environmental sounds — neutral / distress proxies per class README",
+    },
 }
 
 
@@ -161,6 +171,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vision", action="store_true", help="Download vision dataset")
     parser.add_argument("--audio", action="store_true", help="Download audio dataset")
     parser.add_argument("--all", action="store_true", help="Download both datasets")
+    parser.add_argument(
+        "--audio-extra",
+        action="store_true",
+        help="Also download Audio Violence Detection + ESC-50 (2 extra Kaggle sets)",
+    )
     parser.add_argument("--force", action="store_true", help="Force redownload")
     parser.add_argument("--skip-unzip", action="store_true", help="Keep zip files only")
     parser.add_argument("--kaggle-slug", type=str, default=None, help="Custom Kaggle slug owner/dataset")
@@ -171,17 +186,20 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    if not any([args.vision, args.audio, args.all, args.kaggle_slug, args.zip_url]):
-        print("Select --vision, --audio, --all, --kaggle-slug, or --zip-url")
+    if not any([args.vision, args.audio, args.all, args.kaggle_slug, args.zip_url, args.audio_extra]):
+        print("Select --vision, --audio, --all, --audio-extra, --kaggle-slug, or --zip-url")
         return 1
 
     try:
-        if args.vision or args.audio or args.all or args.kaggle_slug:
+        if args.vision or args.audio or args.all or args.kaggle_slug or args.audio_extra:
             ensure_kaggle_ready()
         if args.all or args.vision:
             download_dataset("vision", force=args.force, skip_unzip=args.skip_unzip)
         if args.all or args.audio:
             download_dataset("audio", force=args.force, skip_unzip=args.skip_unzip)
+        if args.audio_extra:
+            download_dataset("audio_violence", force=args.force, skip_unzip=args.skip_unzip)
+            download_dataset("audio_esc50", force=args.force, skip_unzip=args.skip_unzip)
         if args.kaggle_slug:
             download_kaggle_slug(
                 slug=args.kaggle_slug,

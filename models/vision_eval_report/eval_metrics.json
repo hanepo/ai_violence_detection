@@ -1,0 +1,36 @@
+{
+  "model": "/Users/user/Downloads/ai-security-system/models/vision_new.tflite",
+  "data_dir": "/Users/user/Downloads/ai-security-system/dataset/vision",
+  "classes": [
+    "non_violent",
+    "violent"
+  ],
+  "split_sizes": {
+    "train": 10528,
+    "val": 2255,
+    "test": 2257
+  },
+  "metrics": {
+    "train": {
+      "accuracy": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "loss": 0.0003590182243641797
+    },
+    "val": {
+      "accuracy": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "loss": 0.00019354326884007917
+    },
+    "test": {
+      "accuracy": 0.9995569339831635,
+      "precision": 1.0,
+      "recall": 0.9993328885923949,
+      "f1": 0.9996663329996663,
+      "loss": 0.0006667474751704005
+    }
+  }
+}

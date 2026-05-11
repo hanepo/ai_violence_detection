@@ -2,40 +2,55 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading
 from pathlib import Path
 
 import cv2
 import numpy as np
 
+# Project root (…/ai-security-system), for resolving relative model paths regardless of cwd.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
 
 class LiteModelRunner:
     def __init__(self, model_path: str):
-        self.model_path = model_path
         self.interpreter = None
         self.input_details = None
         self.output_details = None
         self.backend = None
+        self._invoke_lock = threading.Lock()
 
+        mp = Path(model_path)
+        if not mp.is_absolute():
+            rooted = _REPO_ROOT / mp
+            if rooted.exists():
+                mp = rooted
+            elif not mp.exists():
+                alt = Path.cwd() / mp
+                if alt.exists():
+                    mp = alt
+
+        self.model_path = str(mp)
         use_tflite = os.getenv("ENABLE_TFLITE", "1") == "1"
-        if use_tflite and Path(model_path).exists():
+        if use_tflite and mp.exists():
             try:
                 # Prefer lightweight runtime on ARM/Raspberry Pi.
                 from tflite_runtime.interpreter import Interpreter
 
-                self.interpreter = Interpreter(model_path=model_path)
+                self.interpreter = Interpreter(model_path=str(mp))
                 self.backend = "tflite_runtime"
             except Exception:
                 try:
                     # Python 3.13 on Pi OS can use LiteRT instead of tflite-runtime.
                     from ai_edge_litert.interpreter import Interpreter
 
-                    self.interpreter = Interpreter(model_path=model_path)
+                    self.interpreter = Interpreter(model_path=str(mp))
                     self.backend = "ai_edge_litert"
                 except Exception:
                     try:
                         import tensorflow as tf
 
-                        self.interpreter = tf.lite.Interpreter(model_path=model_path)
+                        self.interpreter = tf.lite.Interpreter(model_path=str(mp))
                         self.backend = "tensorflow"
                     except Exception:
                         self.interpreter = None
@@ -66,9 +81,11 @@ class LiteModelRunner:
         x = x.astype(inp["dtype"])
         x = np.expand_dims(x, axis=0)
 
-        self.interpreter.set_tensor(inp["index"], x)
-        self.interpreter.invoke()
-        y = self.interpreter.get_tensor(out["index"])
+        # TFLite interpreters are not thread-safe; the dashboard may run multiple MJPEG clients.
+        with self._invoke_lock:
+            self.interpreter.set_tensor(inp["index"], x)
+            self.interpreter.invoke()
+            y = self.interpreter.get_tensor(out["index"])
         return np.array(y, dtype=np.float32).reshape(-1)
 
     @staticmethod
@@ -96,6 +113,7 @@ class AudioInference:
         self.runner = LiteModelRunner(model_path)
         self.labels = self._load_labels(model_path)
         self.aggressive_index = self._resolve_aggressive_index(self.labels)
+        self.neutral_index = self._resolve_neutral_index(self.labels)
 
     @staticmethod
     def _load_labels(model_path: str) -> list[str]:
@@ -119,6 +137,16 @@ class AudioInference:
             if "aggress" in norm or "fight" in norm or "viol" in norm:
                 return i
 
+        return None
+
+    @staticmethod
+    def _resolve_neutral_index(labels: list[str]) -> int | None:
+        if not labels:
+            return None
+        for i, label in enumerate(labels):
+            norm = label.lower().replace("-", "_").replace(" ", "_")
+            if norm == "neutral" or norm == "ambient" or norm == "ambient_neutral":
+                return i
         return None
 
     @staticmethod
@@ -189,4 +217,14 @@ class AudioInference:
         }
 
     def score(self, mfcc: np.ndarray) -> float:
-        return float(self.predict(mfcc)["aggressive_score"])
+        pred = self.predict(mfcc)
+        probs = pred.get("probabilities") or {}
+        if self.neutral_index is not None and self.labels and probs:
+            # Multi-class with explicit neutral: threat = everything not neutral (supports 3+ classes).
+            p_n = float(
+                probs.get(self.labels[self.neutral_index], 0.0)
+                if self.neutral_index < len(self.labels)
+                else 0.0
+            )
+            return float(np.clip(1.0 - p_n, 0.0, 1.0))
+        return float(pred["aggressive_score"])

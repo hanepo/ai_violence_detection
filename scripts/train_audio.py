@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
+import shutil
 from pathlib import Path
 
 import librosa
@@ -178,6 +180,7 @@ def train(
     val_ratio: float = 0.15,
     test_ratio: float = 0.15,
     binary_aggressive: bool = False,
+    report_dir: Path | None = None,
 ) -> None:
     if abs((train_ratio + val_ratio + test_ratio) - 1.0) > 1e-6:
         raise ValueError("train/val/test ratios must sum to 1.0")
@@ -223,9 +226,9 @@ def train(
         title="Audio Training Metrics and Loss",
     )
 
-    # Confusion matrices and metrics for all three splits.
     cm_dir = out_model.parent
     splits = [("train", x_train, y_train, "Train"), ("val", x_val, y_val, "Validation"), ("test", x_test, y_test, "Test (Held-out)")]
+    metrics_by_split: dict[str, dict[str, float]] = {}
     for split_name, xs, ys, label in splits:
         yt, yp = _collect_audio_preds(model, xs, ys)
         acc = accuracy_score(yt, yp)
@@ -240,6 +243,12 @@ def train(
         print(f"F1       : {f1:.4f}")
         _print_cm(cm, classes, f"Audio — {label}")
         _plot_cm(cm, classes, f"Audio — {label}", cm_dir / f"audio_cm_{split_name}.png")
+        metrics_by_split[split_name] = {
+            "accuracy": float(acc),
+            "precision_macro": float(prec),
+            "recall_macro": float(rec),
+            "f1_macro": float(f1),
+        }
 
     out_model.parent.mkdir(parents=True, exist_ok=True)
     saved_model_dir = out_model.parent / "audio_saved_model"
@@ -255,6 +264,42 @@ def train(
     print(f"Saved TFLite model to: {out_model}")
     print(f"Saved class labels to: {labels_path}")
 
+    rep = report_dir or (out_model.parent / "audio_training_report")
+    rep.mkdir(parents=True, exist_ok=True)
+    summary = {
+        "class_names": classes,
+        "n_samples_total": int(n),
+        "split_sizes": {"train": int(len(x_train)), "val": int(len(x_val)), "test": int(len(x_test))},
+        "training": {
+            "epochs": epochs,
+            "batch_size": batch_size,
+            "train_ratio": train_ratio,
+            "val_ratio": val_ratio,
+            "test_ratio": test_ratio,
+            "binary_aggressive": binary_aggressive,
+        },
+        "metrics": metrics_by_split,
+        "artifacts_relative": {
+            "tflite": str(out_model.as_posix()),
+            "labels": str(labels_path.as_posix()),
+            "saved_model_dir": str((out_model.parent / "audio_saved_model").as_posix()),
+        },
+    }
+    (rep / "metrics.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    for fname in [
+        "audio_training_history.csv",
+        "audio_training_history.png",
+        "audio_cm_train.png",
+        "audio_cm_val.png",
+        "audio_cm_test.png",
+    ]:
+        src = cm_dir / fname
+        if src.exists():
+            shutil.copy2(src, rep / fname)
+    shutil.copy2(out_model, rep / out_model.name)
+    shutil.copy2(labels_path, rep / labels_path.name)
+    print(f"  Report directory: {rep.resolve()}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train audio aggression classifier from WAV files")
@@ -266,6 +311,11 @@ if __name__ == "__main__":
     parser.add_argument("--val-ratio", type=float, default=0.15)
     parser.add_argument("--test-ratio", type=float, default=0.15)
     parser.add_argument("--binary-aggressive", action="store_true", help="Train binary model: aggressive vs non-aggressive")
+    parser.add_argument(
+        "--report-dir",
+        default="models/audio_training_report",
+        help="Directory for metrics.json, learning curves, confusion matrices, and model copies",
+    )
     args = parser.parse_args()
     train(
         Path(args.data_dir),
@@ -276,4 +326,5 @@ if __name__ == "__main__":
         args.val_ratio,
         args.test_ratio,
         args.binary_aggressive,
+        report_dir=Path(args.report_dir),
     )

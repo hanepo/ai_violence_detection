@@ -7,7 +7,7 @@ from pathlib import Path
 import cv2
 
 
-VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv"}
+VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv", ".mpeg", ".mpg"}
 
 
 def ensure_dir(path: Path) -> None:
@@ -188,18 +188,96 @@ def prepare_audio(raw_root: Path, out_root: Path) -> None:
     print(f"Output: {out_root}")
 
 
+def prepare_cctv_fights_vision(
+    cctv_root: Path,
+    nonfight_dir: Path,
+    out_root: Path,
+    violent_frame_every: int = 15,
+    violent_max_frames: int = 10,
+    nonfight_frame_every: int = 10,
+    nonfight_max_frames: int = 50,
+    resize: int = 224,
+) -> None:
+    """Extract frames from CCTV Fights Dataset (violent) and a non-fight video dir.
+
+    CCTV Fights Dataset layout expected under cctv_root:
+        CCTV_DATA/{training,testing,validation}/*.mpeg
+        NON_CCTV_DATA/{training,testing,validation}/*.mpeg
+    All videos are treated as the 'violent' class.
+    Videos in nonfight_dir are the 'non_violent' class.
+    """
+    violent_dir = out_root / "violent"
+    non_violent_dir = out_root / "non_violent"
+    ensure_dir(violent_dir)
+    ensure_dir(non_violent_dir)
+
+    fight_videos = [
+        p for p in cctv_root.rglob("*")
+        if p.is_file() and p.suffix.lower() in VIDEO_EXTS
+    ]
+    print(f"Found {len(fight_videos)} fight videos in {cctv_root}")
+    total_violent = 0
+    for vp in sorted(fight_videos):
+        total_violent += extract_frames_from_video(
+            vp, violent_dir, violent_frame_every, violent_max_frames, resize
+        )
+
+    nonfight_videos = [
+        p for p in nonfight_dir.rglob("*")
+        if p.is_file() and p.suffix.lower() in VIDEO_EXTS
+    ]
+    print(f"Found {len(nonfight_videos)} non-fight videos in {nonfight_dir}")
+    total_nonviolent = 0
+    for vp in sorted(nonfight_videos):
+        total_nonviolent += extract_frames_from_video(
+            vp, non_violent_dir, nonfight_frame_every, nonfight_max_frames, resize
+        )
+
+    print(f"CCTV vision prep complete.")
+    print(f"  Violent frames   : {total_violent}")
+    print(f"  Non-violent frames: {total_nonviolent}")
+    print(f"  Output: {out_root}")
+
+
+def merge_youtube_violence_wavs(raw_root: Path, audio_out: Path, max_files: int = 4000) -> int:
+    """Append WAVs from Kaggle 'Audio-based Violence Detection' Violence/ folders into aggressive/."""
+    aggressive_dir = audio_out / "aggressive"
+    ensure_dir(aggressive_dir)
+    violence_dirs = [p for p in raw_root.rglob("*") if p.is_dir() and p.name.lower() == "violence"]
+    n = 0
+    for vdir in violence_dirs:
+        for wav_path in vdir.glob("*.wav"):
+            if n >= max_files:
+                return n
+            dst = aggressive_dir / f"ytviol_{n:06d}_{wav_path.name}"
+            if not dst.exists():
+                shutil.copy2(wav_path, dst)
+            n += 1
+    return n
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Prepare raw datasets into training-ready folders")
     parser.add_argument("--vision", action="store_true", help="Prepare vision dataset")
     parser.add_argument("--audio", action="store_true", help="Prepare audio dataset")
     parser.add_argument("--all", action="store_true", help="Prepare both")
     parser.add_argument("--extra-hockey", action="store_true", help="Prepare extra hockey fight dataset and merge into vision")
+    parser.add_argument("--cctv-fights", action="store_true", help="Prepare CCTV Fights Dataset (violent) + Peliculas noFights (non_violent)")
 
+    parser.add_argument("--cctv-root", default="dataset/vision dataset", help="Root of CCTV Fights Dataset (has CCTV_DATA/ and NON_CCTV_DATA/)")
+    parser.add_argument("--nonfight-root", default="dataset/Peliculas/noFights", help="Directory of non-fight videos")
     parser.add_argument("--rwf-raw", default="dataset/raw/rwf2000")
     parser.add_argument("--hockey-raw", default="dataset/raw/extra_hockey")
     parser.add_argument("--cremad-raw", default="dataset/raw/cremad")
+    parser.add_argument("--violence-raw", default="dataset/raw/audio_violence_youtube")
     parser.add_argument("--vision-out", default="dataset/vision")
     parser.add_argument("--audio-out", default="dataset/audio")
+
+    parser.add_argument(
+        "--merge-youtube-violence",
+        action="store_true",
+        help="After --audio, also copy Violence/*.wav from --violence-raw into audio/aggressive/",
+    )
 
     parser.add_argument("--frame-every", type=int, default=45)
     parser.add_argument("--max-frames-per-video", type=int, default=10)
@@ -209,8 +287,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    if not any([args.vision, args.audio, args.all, args.extra_hockey]):
-        print("Select --vision, --audio, --extra-hockey, or --all")
+    if not any([args.vision, args.audio, args.all, args.extra_hockey, args.merge_youtube_violence, args.cctv_fights]):
+        print("Select --vision, --audio, --extra-hockey, --merge-youtube-violence, or --all")
         return 1
 
     if args.all or args.vision:
@@ -235,6 +313,21 @@ def main() -> int:
         prepare_audio(
             raw_root=Path(args.cremad_raw),
             out_root=Path(args.audio_out),
+        )
+    if args.merge_youtube_violence:
+        added = merge_youtube_violence_wavs(Path(args.violence_raw), Path(args.audio_out))
+        print(f"Merged YouTube-violence WAVs into aggressive: {added} files attempted")
+
+    if args.cctv_fights:
+        prepare_cctv_fights_vision(
+            cctv_root=Path(args.cctv_root),
+            nonfight_dir=Path(args.nonfight_root),
+            out_root=Path(args.vision_out),
+            violent_frame_every=max(1, args.frame_every),
+            violent_max_frames=max(1, args.max_frames_per_video),
+            nonfight_frame_every=max(1, args.frame_every // 3 + 1),
+            nonfight_max_frames=min(80, args.max_frames_per_video * 5),
+            resize=max(1, args.resize),
         )
 
     print("Dataset preparation done.")

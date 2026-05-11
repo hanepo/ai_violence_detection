@@ -26,7 +26,7 @@ from utils.inference import AudioInference, VisionInference
 from utils.logging_utils import setup_logging
 from utils.mqtt_notifier import MQTTNotifier
 from utils.ring_buffer import TimeRingBuffer
-from utils.video import VideoCaptureStream, write_playable_mp4
+from utils.video import BlackFrameVideoStream, VideoCaptureStream, write_playable_mp4
 
 try:
 	from utils.pir import PIRSensor
@@ -34,14 +34,16 @@ except Exception:
 	PIRSensor = None
 
 
-def _append_audio_chunk(audio_stream: AudioStream, audio_buffer: TimeRingBuffer) -> None:
+def _append_audio_chunk(audio_stream: AudioStream | None, audio_buffer: TimeRingBuffer) -> None:
+	if audio_stream is None:
+		return
 	wav, wav_ts = audio_stream.read_chunk()
 	audio_buffer.append(wav, wav_ts)
 
 
 def _collect_post_event_context(
-	video_stream: VideoCaptureStream,
-	audio_stream: AudioStream,
+	video_stream: VideoCaptureStream | BlackFrameVideoStream,
+	audio_stream: AudioStream | None,
 	video_buffer: TimeRingBuffer,
 	audio_buffer: TimeRingBuffer,
 	settings,
@@ -164,21 +166,32 @@ def run() -> None:
 		pir = PIRSensor(pin=settings.pir_pin, use_mock=settings.use_mock_pir)
 	buzzer = Buzzer(pin=settings.buzzer_pin, enabled=settings.enable_buzzer, use_mock=settings.use_mock_pir)
 
-	video_stream = VideoCaptureStream(
-		camera_index=settings.camera_index,
-		width=settings.frame_width,
-		height=settings.frame_height,
-		fps=settings.fps,
+	if not settings.enable_vision and not settings.enable_audio:
+		raise RuntimeError("ENABLE_VISION and ENABLE_AUDIO cannot both be disabled")
+
+	video_stream = (
+		VideoCaptureStream(
+			camera_index=settings.camera_index,
+			width=settings.frame_width,
+			height=settings.frame_height,
+			fps=settings.fps,
+		)
+		if settings.enable_vision
+		else BlackFrameVideoStream(settings.frame_width, settings.frame_height)
 	)
 
-	audio_stream = AudioStream(
-		sample_rate=settings.audio_sample_rate,
-		channels=settings.audio_channels,
-		chunk_seconds=settings.audio_chunk_seconds,
+	audio_stream = (
+		AudioStream(
+			sample_rate=settings.audio_sample_rate,
+			channels=settings.audio_channels,
+			chunk_seconds=settings.audio_chunk_seconds,
+		)
+		if settings.enable_audio
+		else None
 	)
 
-	vision = VisionInference(settings.vision_model_path)
-	audio = AudioInference(settings.audio_model_path)
+	vision = VisionInference(settings.vision_model_path) if settings.enable_vision else None
+	audio = AudioInference(settings.audio_model_path) if settings.enable_audio else None
 
 	# Keep enough history to support pre + post window extraction.
 	video_buffer = TimeRingBuffer(max_seconds=settings.pre_event_seconds + settings.post_event_seconds + 5)
@@ -218,15 +231,21 @@ def run() -> None:
 					continue
 				video_buffer.append(frame, frame_ts)
 
-				raw_cv = vision.score(frame)
-				score_hist.append(raw_cv)
-				cv = float(sum(score_hist) / len(score_hist))
+				raw_cv = vision.score(frame) if vision is not None else None
+				if settings.enable_vision:
+					score_hist.append(float(raw_cv))
+					cv = float(sum(score_hist) / len(score_hist))
+				else:
+					cv = None
 
 				_append_audio_chunk(audio_stream, audio_buffer)
-				latest = audio_buffer.latest()
-				if latest is not None:
-					mfcc = extract_mfcc(latest.data, settings.audio_sample_rate)
-					ca = audio.score(mfcc)
+				if settings.enable_audio and audio is not None:
+					latest = audio_buffer.latest()
+					if latest is not None:
+						mfcc = extract_mfcc(latest.data, settings.audio_sample_rate)
+						ca = audio.score(mfcc)
+					else:
+						ca = None
 				else:
 					ca = None
 
@@ -236,6 +255,7 @@ def run() -> None:
 					alpha=settings.alpha,
 					beta=settings.beta,
 					threshold=settings.threshold,
+					audio_alert_threshold=settings.audio_aggressive_threshold,
 				)
 
 				if fusion.score >= on_threshold:
@@ -251,12 +271,13 @@ def run() -> None:
 					alert_active = False
 
 				logging.info(
-					"Fusion=%.3f Cv(raw=%.3f smooth=%.3f) Ca=%.3f StableAlert=%s",
+					"Fusion=%.3f Cv=%s Ca=%s StableAlert=%s vision=%s audio=%s",
 					fusion.score,
-					raw_cv,
-					fusion.cv,
-					fusion.ca,
+					f"{fusion.cv:.3f}" if cv is not None else "off",
+					f"{fusion.ca:.3f}" if ca is not None else "off",
 					alert_active,
+					settings.enable_vision,
+					settings.enable_audio,
 				)
 
 				if alert_active and (time.time() - last_alert_ts) > settings.alert_cooldown_seconds:
