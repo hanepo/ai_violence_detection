@@ -84,7 +84,7 @@ def main() -> int:
         print(f"Upload dir missing: {args.upload_dir}")
         return 1
 
-    for cls in ("aggressive", "distressed", "neutral"):
+    for cls in ("aggressive", "distressed", "neutral", "physical_impacts"):
         ensure_dir(args.out_dir / cls)
 
     copied = 0
@@ -102,7 +102,7 @@ def main() -> int:
     rng = np.random.default_rng(args.seed)
     total_aug = 0
     if args.min_per_class > 0:
-        for cls in ("aggressive", "distressed", "neutral"):
+        for cls in ("aggressive", "distressed", "neutral", "physical_impacts"):
             total_aug += pad_class_with_noise(args.out_dir / cls, args.min_per_class, rng)
 
     print(f"Bootstrap done: copied={copied} skipped_unlabeled={skipped} noise_aug_writes={total_aug}")

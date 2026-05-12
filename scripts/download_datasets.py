@@ -29,9 +29,24 @@ DATASETS = {
     "audio_esc50": {
         "slug": "mmoreaux/environmental-sound-classification-50",
         "target_dir": "dataset/raw/esc50",
-        "description": "ESC-50 environmental sounds — neutral / distress proxies per class README",
+        "description": "ESC-50 environmental sounds — physical_impacts / distressed / neutral classes",
+    },
+    "audio_xd_violence": {
+        "slug": "bypktt/xd-violence",
+        "target_dir": "dataset/raw/xd_violence",
+        "description": "XD-Violence Single-Label Edition (mp4) — Fighting→physical_impacts, Abuse/Riot→aggressive",
+    },
+    "audio_noise": {
+        "slug": "minsithu/audio-noise-dataset",
+        "target_dir": "dataset/raw/audio_noise",
+        "description": "Audio Noise Dataset (webm) — crowded/urban/rain/workplace ambient → neutral",
     },
 }
+
+# FSDKaggle2018 is a competition download (different Kaggle API endpoint).
+# Users must first accept rules at: https://www.kaggle.com/competitions/freesound-audio-tagging
+FSD2018_COMPETITION = "freesound-audio-tagging"
+FSD2018_TARGET_DIR = "dataset/raw/fsd2018"
 
 
 def run_cmd(cmd: list[str]) -> None:
@@ -142,6 +157,31 @@ def download_kaggle_slug(slug: str, target_dir: Path, force: bool, skip_unzip: b
     print(f"Done: {target_dir}")
 
 
+def download_fsd2018_competition(force: bool, skip_unzip: bool) -> None:
+    """Download FSDKaggle2018 via the Kaggle competitions API.
+
+    Requires the user to have accepted the competition rules at:
+    https://www.kaggle.com/competitions/freesound-audio-tagging
+    """
+    target_dir = Path(FSD2018_TARGET_DIR)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    kaggle_cmd = resolve_kaggle_cmd()
+    print(f"Downloading FSDKaggle2018 competition data to: {target_dir}")
+    print("NOTE: You must first accept the competition rules at "
+          "https://www.kaggle.com/competitions/freesound-audio-tagging")
+    cmd = kaggle_cmd + ["competitions", "download", "-c", FSD2018_COMPETITION, "-p", str(target_dir)]
+    if force:
+        cmd.append("--force")
+    run_cmd(cmd)
+    for p in list(target_dir.glob("*.zip")):
+        if skip_unzip:
+            print(f"Downloaded zip: {p}")
+            continue
+        print(f"Extracting: {p}")
+        unzip_all([p], target_dir, force=force)
+    print(f"Done: {target_dir}")
+
+
 def download_zip_url(zip_url: str, target_dir: Path, force: bool, skip_unzip: bool) -> None:
     target_dir.mkdir(parents=True, exist_ok=True)
     filename = zip_url.rstrip("/").split("/")[-1] or "dataset.zip"
@@ -174,7 +214,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--audio-extra",
         action="store_true",
-        help="Also download Audio Violence Detection + ESC-50 (2 extra Kaggle sets)",
+        help="Download Audio Violence Detection + ESC-50 (extra aggressive/neutral sources)",
+    )
+    parser.add_argument(
+        "--audio-physical",
+        action="store_true",
+        help="Download physical_impacts sources: XD-Violence, Audio Noise Dataset, and FSDKaggle2018",
     )
     parser.add_argument("--force", action="store_true", help="Force redownload")
     parser.add_argument("--skip-unzip", action="store_true", help="Keep zip files only")
@@ -186,7 +231,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    if not any([args.vision, args.audio, args.all, args.kaggle_slug, args.zip_url, args.audio_extra]):
+    if not any([args.vision, args.audio, args.all, args.kaggle_slug, args.zip_url, args.audio_extra, args.audio_physical]):
         print("Select --vision, --audio, --all, --audio-extra, --kaggle-slug, or --zip-url")
         return 1
 
@@ -200,6 +245,13 @@ def main() -> int:
         if args.audio_extra:
             download_dataset("audio_violence", force=args.force, skip_unzip=args.skip_unzip)
             download_dataset("audio_esc50", force=args.force, skip_unzip=args.skip_unzip)
+        if args.audio_physical:
+            download_dataset("audio_xd_violence", force=args.force, skip_unzip=args.skip_unzip)
+            download_dataset("audio_noise", force=args.force, skip_unzip=args.skip_unzip)
+            try:
+                download_fsd2018_competition(force=args.force, skip_unzip=args.skip_unzip)
+            except Exception as exc:
+                print(f"FSD2018 download skipped (accept competition rules on Kaggle first): {exc}")
         if args.kaggle_slug:
             download_kaggle_slug(
                 slug=args.kaggle_slug,

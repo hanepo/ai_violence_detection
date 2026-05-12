@@ -1,3 +1,4 @@
 aggressive
 distressed
 neutral
+physical_impacts
